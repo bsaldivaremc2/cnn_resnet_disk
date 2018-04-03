@@ -7,81 +7,7 @@ import os
 import sys
 from dl_utils import *
 from PIL import Image
-
-
-def train(df_xy_args,model=None,iters=10,lr=0.001,
-          save_model=True,save_name=None,
-          restore_model=False,restore_name=None,
-          v=False,opt_mode='classification'):
-    
-    idf = df_xy_args['df']   
-    is_gray = df_xy_args['toGray']
-    if is_gray==True:
-        in_channels=1
-    else:
-        in_channels=3
-    
-    xs0 = df_xy_args['resize_wh']
-    ixs = [None,xs0[1],xs0[0],in_channels]
-    iys = [None,idf[df_xy_args['xp_label']].shape[1]*2]
-    
-
-    #ixs,iys=ix.shape,iy.shape
-    
-    xi,y_,learning_rate,train_bool,loss,train_step,stats = create_model(ixs,iys,model=model,opt_mode=opt_mode)
-    init_op = tf.global_variables_initializer()
-    saver = tf.train.Saver()
-    with tf.Session() as s:
-        if restore_model==True:
-            if restore_name==None:
-                print("No model file specified")
-                return
-            else:
-                saver.restore(s,restore_name)
-        else:
-            s.run(init_op)
-        fd={learning_rate:lr,train_bool:True}
-        for _ in range(0,iters):
-            
-            idfs = idf.shape[0]            
-            batch_size = df_xy_args['batch_size']
-            batches = idfs//batch_size
-            batch_rows = batch_size*batches
-            
-            
-            for __ in range(0,batches):
-                df_xy_args['offset']=__
-                imgs, fxs,fys = df_x_y (**df_xy_args)
-                iy=np.concatenate([fxs,fys],1)
-                ix=imgs
-                fdt={xi:ix,y_:iy}
-                fd.update(fdt)
-                _t,l= s.run([train_step,loss],feed_dict=fd)
-                if v==True:
-                    print("Iter:",_,"batch",__,"batches",batches,"Loss:",l)
-                
-            if batch_rows<idfs:
-                df_xy_args['offset']=batches
-                df_xy_args['batch_size'] = idfs - batch_rows               
-                imgs, fxs,fys = df_x_y (**df_xy_args)
-                iy=np.concatenate([fxs,fys],1)
-                ix=imgs
-                
-                fdt={xi:ix,y_:iy}
-                fd.update(fdt)
-                _t,l= s.run([train_step,loss],feed_dict=fd)
-                if v==True:
-                    print("Iter:",_,"batch",__+1,"batches",batches,"Loss:",l)
-            
-            
-            
-        if save_model==True:
-            if save_name==None:
-                print("No model specified, model not being saved")
-                return
-            else:
-                save_path = saver.save(s, save_name)
-                print("Model saved in file: %s" % save_name)
+import zipfile
 
 def create_model(ixs,iys,model=None,opt_mode='classification'):    
     if model==None:
@@ -143,9 +69,9 @@ def create_model(ixs,iys,model=None,opt_mode='classification'):
     
     #Define the model here--UP
     
-    y_CNN = tf.nn.softmax(prediction,name='Softmax')
-    class_pred = tf.argmax(y_CNN,1,name='ClassPred')
-    loss = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_CNN), reduction_indices=[1]),name="loss")
+    #y_CNN = tf.nn.softmax(prediction,name='Softmax')
+    #class_pred = tf.argmax(y_CNN,1,name='ClassPred')
+    #loss = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_CNN), reduction_indices=[1]),name="loss")
     
     if opt_mode=='classification':        
         y_CNN = tf.nn.softmax(prediction,name='Softmax')        
@@ -164,7 +90,7 @@ def create_model(ixs,iys,model=None,opt_mode='classification'):
 
     return [xi,y_,learning_rate,train_bool,loss,train_step,stats_dic]
 
-def predict_model(iX,model_dir=None,opt_mode='classification',is_training=False):
+def predict_model(df_xy_args,model_dir=None,opt_mode='classification',is_training=False,v=False):
     if model_dir==None:
         print("No model to load")
         return
@@ -174,14 +100,51 @@ def predict_model(iX,model_dir=None,opt_mode='classification',is_training=False)
             with s.graph.as_default():
                 saver = tf.train.import_meta_graph(save_dir+".meta")
                 saver.restore(s,save_dir)
-                fd={'x:0':iX,'train_test:0':is_training}
-                if opt_mode=='classification':
-                    score,c = s.run(['Softmax:0','ClassPred:0'],feed_dict=fd)
+                idfs,batches,batch_size,batch_rows = batch_params(df_xy_args)
+                
+                fd={'train_test:0':is_training}
+                
+                predict_params_d = {'classification':['Softmax:0','ClassPred:0'],'regression':'FCL/FC:0'}
+                predict_params = predict_params_d[opt_mode]
+
+                df_xy_args_d = {'classification':'y_label','regression':'xp_label'}
+                df_xy_args[df_xy_args_d[opt_mode]]=None
+
+                output = []
+                #########
+                for batch in range(0,batches):
+                    df_xy_args['offset']=batch*batch_size    
+                    if opt_mode=='regression':
+                        #Get x and y values
+                        ix = df_x_y (**df_xy_args)
+                    elif opt_mode == 'classification':
+                        ix = df_xy (**df_xy_args)
+    
+                    fdt={'x:0':ix}
+                    fd.update(fdt)
                     
-                    return score,c
-                elif opt_mode=='regression':
-                    fcl = s.run('FCL/FC:0',feed_dict=fd)
-                    return fcl
+                    fcl = s.run(predict_params,feed_dict=fd)
+                    output.append(fcl)
+                    if v==True:
+                        print(fcl)
+                
+                if batch_rows<idfs:
+                    df_xy_args['offset']=batches*batch_size
+                    df_xy_args['batch_size'] = idfs - batch_rows
+                    if opt_mode=='regression':
+                        #Get x and y values
+                        ix = df_x_y (**df_xy_args)
+                    elif opt_mode == 'classification':
+                        ix = df_xy (**df_xy_args)
+    
+                    fdt={'x:0':ix}
+                    fd.update(fdt)
+                    
+                    fcl = s.run(predict_params,feed_dict=fd)
+                    if v==True:
+                        print(fcl)
+                    output.append(fcl)
+        return output
 
 def stats_class(predicted,ground_truth):
     yi = tf.argmax(ground_truth,1)
@@ -206,7 +169,49 @@ def acc_sen_spe(tp,tn,fp,fn):
     stats_dic['spe']=tn/(tn+fp)
     return stats_dic.copy()
 
-def df_x_y (df,x_label,xp_label,yp_label,batch_size=5,offset=0,resize_wh=(32,32),toGray=False):
+def df_xy (df,x_label,y_label,batch_size=5,offset=0,resize_wh=(32,32),toGray=False,zip_file=None):
+    """
+    Function to load images by batch. Oriented to CLASSIFICATION
+    """
+    if toGray==True:
+        channels=1
+    else:
+        channels=3
+    x_y = df.iloc[offset:offset+batch_size]
+    images = x_y[x_label].values
+    
+    
+    imgs = []
+    fxa = []
+    fya = []
+    for _ in range(0,batch_size):
+        if type(zip_file)!=type(None):
+            with zipfile.ZipFile(zip_file) as zf:
+                with zf.open(images[_]) as unzip_img:
+                    img, fx,fy = imgOpenResize(unzip_img,resize_wh)
+        else:
+            img, fx,fy = imgOpenResize(images[_],resize_wh)
+        
+        fxa.append(fx)
+        fya.append(fy)
+        imgs.append(img)
+           
+    x = np.asarray(imgs)
+    if toGray==True:
+        x = list(map(npToGray,x))
+    x = np.asarray(x)
+    x = x.reshape([x.shape[0],x.shape[1],x.shape[2],channels])
+    
+    if type(y_label)!=(type(None)):
+        target = np.concatenate(x_y[y_label].values,0)
+        return x,target
+    else:
+        return x
+
+def df_x_y (df,x_label,xp_label=None,yp_label=None,batch_size=5,offset=0,resize_wh=(32,32),toGray=False,zip_file=None):
+    """
+    Function to load images by batch. Oriented to LANDMARK REGRESSION
+    """
     if toGray==True:
         channels=1
     else:
@@ -217,7 +222,12 @@ def df_x_y (df,x_label,xp_label,yp_label,batch_size=5,offset=0,resize_wh=(32,32)
     fxa = []
     fya = []
     for _ in range(0,batch_size):
-        img, fx,fy = imgOpenResize(images[_],resize_wh)
+        if type(zip_file)!=type(None):
+            with zipfile.ZipFile(zip_file) as zf:
+                with zf.open(images[_]) as unzip_img:
+                    img, fx,fy = imgOpenResize(unzip_img,resize_wh)
+        else:
+            img, fx,fy = imgOpenResize(images[_],resize_wh)
         
         fxa.append(fx)
         fya.append(fy)
@@ -231,17 +241,19 @@ def df_x_y (df,x_label,xp_label,yp_label,batch_size=5,offset=0,resize_wh=(32,32)
             div_m = np.concatenate([div_m,td],1)
         return num*div_m
         
-    
-    xps = div_np(x_y[xp_label],fxa,batch_size)
-    yps = div_np(x_y[yp_label],fya,batch_size)
        
     x = np.asarray(imgs)
     if toGray==True:
         x = list(map(npToGray,x))
     x = np.asarray(x)
     x = x.reshape([x.shape[0],x.shape[1],x.shape[2],channels])
+    if type(xp_label)!=type(None):
+        xps = div_np(x_y[xp_label],fxa,batch_size)
+        yps= div_np(x_y[yp_label],fya,batch_size)
     
-    return x,xps.values,yps.values
+        return x,xps.values,yps.values
+    else:
+        return x
 
 def rgbToG(img):
     """
@@ -331,3 +343,215 @@ def _res_131(_input,depths=[4,4,8],
                 rn=name_scope+"_A_last"
             _output = relu(_output,name_scope=rn)
     return _output
+
+def send_mail(email_origin,email_destination,email_pass,subject="Test report",content="Test"):
+    server = smtplib.SMTP('smtp.gmail.com:587')
+    server.starttls()
+    #Next, log in to the server
+    server.login(email_origin,email_pass)
+    msg = "Subject:"+subject+" \n\n "+content+"\n" # The /n separates the message from the headers
+    server.sendmail(email_origin,email_destination, msg)
+def train(df_xy_args,model=None,iters=10,lr=0.001,
+          save_model=True,save_name=None,
+          restore_model=False,restore_name=None,
+          v=False,opt_mode='classification'):
+    
+    
+    # Define parameters to 
+    idf = df_xy_args['df']   
+    is_gray = df_xy_args['toGray']
+    if is_gray==True:
+        in_channels=1
+    else:
+        in_channels=3
+    
+    xs0 = df_xy_args['resize_wh']
+    ixs = [None,xs0[1],xs0[0],in_channels]
+    
+    if opt_mode=='regression':
+        iys = [None,idf[df_xy_args['xp_label']].shape[1]*2]
+    elif opt_mode=='classification':
+        iys = [None,idf[df_xy_args['y_label']][0].shape[1]]
+
+    #ixs,iys=ix.shape,iy.shape
+    
+    xi,y_,learning_rate,train_bool,loss,train_step,stats = create_model(ixs,iys,model=model,opt_mode=opt_mode)
+    init_op = tf.global_variables_initializer()
+    saver = tf.train.Saver()
+    with tf.Session() as s:
+        if restore_model==True:
+            if restore_name==None:
+                print("No model file specified")
+                return
+            else:
+                saver.restore(s,restore_name)
+        else:
+            s.run(init_op)
+        fd={learning_rate:lr,train_bool:True}
+        for _ in range(0,iters):
+            
+            #Define parameters to load from disk
+            idfs,batches,batch_size,batch_rows = batch_params(df_xy_args)
+            
+            for batch in range(0,batches):
+                df_xy_args['offset']=batch*batch_size    
+                if opt_mode=='regression':
+                    #Get x and y values
+                    imgs, fxs,fys = df_x_y (**df_xy_args)
+                        
+                    #Join the points of regression 
+                    iy=np.concatenate([fxs,fys],1)
+                    ix=imgs
+                elif opt_mode == 'classification':
+                    ix,iy = df_xy (**df_xy_args)
+
+                fdt={xi:ix,y_:iy}
+                fd.update(fdt)
+                    
+                _t,l= s.run([train_step,loss],feed_dict=fd)
+                if v==True:
+                    print("Iter:",_,"batch",batch,"batches",batches,"Loss:",l)
+                
+                if batch_rows<idfs:
+                    df_xy_args['offset']=batches*batch_size
+                    df_xy_args['batch_size'] = idfs - batch_rows
+                    
+                    if opt_mode=='regression':
+                        #Get x and y values
+                        imgs, fxs,fys = df_x_y (**df_xy_args)
+                        
+                        #Join the points of regression 
+                        iy=np.concatenate([fxs,fys],1)
+                        ix=imgs
+                    elif opt_mode == 'classification':
+                        ix,iy = df_xy (**df_xy_args)
+
+                        #Add the values to the dictionary for training
+                    fdt={xi:ix,y_:iy}
+                    fd.update(fdt)
+                    _t,l= s.run([train_step,loss],feed_dict=fd)
+                    if v==True:
+                        print("Iter:",_,"batch",batch+1,"batches",batches,"Loss:",l)
+            
+        if save_model==True:
+            if save_name==None:
+                print("No model specified, model not being saved")
+                return
+            else:
+                save_path = saver.save(s, save_name)
+                print("Model saved in file: %s" % save_name)
+
+def test_model(df_xy_args,model_name=None,opt_mode='regression',stats_list=['tp','tn','fp','fn','loss','spe','sen','acc'],is_training=False):
+    if model_name==None:
+        print("No model to load")
+        return
+    else:
+        ## Make the stats for classification useful. Without :0 they can't work
+        stats_l = []
+        for _ in stats_list:
+            stats_l.append(_+":0")
+        return_dic ={}
+        
+        stats_dic = {'regression':'loss:0','classification':stats_l}
+        stats_output = stats_dic[opt_mode]
+    
+        #Start loading the model
+        with tf.Session('', tf.Graph()) as s:
+            with s.graph.as_default():
+                ##Restore model
+                saver = tf.train.import_meta_graph(model_name+".meta")
+                saver.restore(s,model_name)
+                
+                #If a dropout layer is present set the values to 1.
+                dop_dic = {}
+                for x in tf.get_default_graph().get_operations():
+                    if x.type == 'Placeholder':
+                        if "drop_out" in x.name:
+                            dop_dic[x.name+":0"]=1.0
+                
+                ### Initialize stats output
+                fd = dop_dic
+                fd={'train_test:0':is_training}
+                fd.update(dop_dic)
+                
+                batch_output = []
+                
+                #Define parameters to load from disk
+                idfs,batches,batch_size,batch_rows = batch_params(df_xy_args)
+                
+                for batch in range(0,batches):
+                    df_xy_args['offset']=batch*batch_size
+                    
+                    if opt_mode=='regression':
+                        #Get x and y values
+                        imgs, fxs,fys = df_x_y (**df_xy_args)
+                        
+                        #Join the points of regression 
+                        iy=np.concatenate([fxs,fys],1)
+                        ix=imgs
+                    
+                    elif opt_mode == 'classification':
+                        ix,iy = df_xy (**df_xy_args)
+
+                    #Add the values to the dictionary for training
+                    fdt={'x:0':ix,'y:0':iy}
+                    fd.update(fdt)
+                    
+                    #Run test
+                    stats_result = s.run(stats_output,feed_dict=fd)
+                    
+                    if opt_mode=='classification':
+                        proc_dic = {}
+                        for _,sr in enumerate(stats_result):
+                            proc_dic[stats_list[_]]=sr
+                        print(proc_dic)
+                        output = proc_dic
+                    elif opt_mode =='regression':
+                        print("Loss",stats_result)
+                        output = stats_result
+                    batch_output.append(output)
+                
+                if batch_rows<idfs:
+                    df_xy_args['offset']=batches*batch_size
+                    df_xy_args['batch_size'] = idfs - batch_rows
+                    
+                    if opt_mode=='regression':
+                        #Get x and y values
+                        imgs, fxs,fys = df_x_y (**df_xy_args)
+                        
+                        #Join the points of regression 
+                        iy=np.concatenate([fxs,fys],1)
+                        ix=imgs
+                    
+                    elif opt_mode == 'classification':
+                        ix,iy = df_xy (**df_xy_args)
+
+                    #Add the values to the dictionary for training
+                    fdt={'x:0':ix,'y:0':iy}
+                    fd.update(fdt)
+                    
+                    #Run test
+                    stats_result = s.run(stats_output,feed_dict=fd)
+                    
+                    if opt_mode=='classification':
+                        proc_dic = {}
+                        for _,sr in enumerate(stats_result):
+                            proc_dic[stats_list[_]]=sr
+                        print(proc_dic)
+                        output = proc_dic
+                    elif opt_mode =='regression':
+                        print("Loss",stats_result)
+                        output = stats_result
+                    batch_output.append(output)
+                #############################
+                
+    return batch_output 
+
+def batch_params(df_xy_args):
+    idf = df_xy_args['df']       
+    idfs = idf.shape[0]
+    batch_size = df_xy_args['batch_size']
+    batches = idfs//batch_size
+    batch_rows = batch_size*batches
+    return idfs,batches,batch_size,batch_rows
+
