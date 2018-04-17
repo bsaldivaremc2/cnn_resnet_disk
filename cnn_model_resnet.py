@@ -169,7 +169,7 @@ def acc_sen_spe(tp,tn,fp,fn):
     stats_dic['spe']=tn/(tn+fp)
     return stats_dic.copy()
 
-def df_xy (df,x_label,y_label,batch_size=5,offset=0,resize_wh=(32,32),toGray=False,zip_file=None):
+def df_xy (df,x_label,y_label,batch_size=5,offset=0,resize_wh=(32,32),input_channels=3,toGray=False,zip_file=None):
     """
     Function to load images by batch. Oriented to CLASSIFICATION
     """
@@ -196,6 +196,9 @@ def df_xy (df,x_label,y_label,batch_size=5,offset=0,resize_wh=(32,32),toGray=Fal
         fya.append(fy)
         imgs.append(img)
            
+    
+    
+
     x = np.asarray(imgs)
     if toGray==True:
         x = list(map(npToGray,x))
