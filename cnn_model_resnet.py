@@ -79,7 +79,7 @@ def create_model(ixs,iys,model=None,opt_mode='classification'):
         loss = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_CNN), reduction_indices=[1]),name="loss")
         acc_,spe_,sen_,tp_,tn_,fp_,fn_ = stats_class(y_CNN,y_)
         stats_dic={'acc':acc_,'spe':spe_,'sen_':sen_,'tp':tp_,'tn':tn_,'fp':fp_,'fn':fn_}
-    elif opt_mode=='regression':
+    elif (opt_mode=='regression') or (opt_mode=='yolo'):
         loss = tf.reduce_mean(tf.pow(tf.subtract(y_,prediction),2),name='loss')
         stats_dic={'loss':loss}   
         
@@ -104,10 +104,10 @@ def predict_model(df_xy_args,model_dir=None,opt_mode='classification',is_trainin
                 
                 fd={'train_test:0':is_training}
                 
-                predict_params_d = {'classification':['Softmax:0','ClassPred:0'],'regression':'FCL/FC:0'}
+                predict_params_d = {'classification':['Softmax:0','ClassPred:0'],'regression':'FCL/FC:0','yolo':'FCL/FC:0'}
                 predict_params = predict_params_d[opt_mode]
 
-                df_xy_args_d = {'classification':'y_label','regression':'xp_label'}
+                df_xy_args_d = {'classification':'y_label','regression':'xp_label','yolo':'y_label'}
                 df_xy_args[df_xy_args_d[opt_mode]]=None
 
                 output = []
@@ -117,7 +117,7 @@ def predict_model(df_xy_args,model_dir=None,opt_mode='classification',is_trainin
                     if opt_mode=='regression':
                         #Get x and y values
                         ix = df_x_y (**df_xy_args)
-                    elif opt_mode == 'classification':
+                    elif (opt_mode == 'classification') or (opt_mode=='yolo'):
                         ix = df_xy (**df_xy_args)
     
                     fdt={'x:0':ix}
@@ -134,7 +134,7 @@ def predict_model(df_xy_args,model_dir=None,opt_mode='classification',is_trainin
                     if opt_mode=='regression':
                         #Get x and y values
                         ix = df_x_y (**df_xy_args)
-                    elif opt_mode == 'classification':
+                    elif (opt_mode == 'classification') or (opt_mode=='yolo'):
                         ix = df_xy (**df_xy_args)
     
                     fdt={'x:0':ix}
@@ -373,7 +373,8 @@ def train(df_xy_args,model=None,iters=10,lr=0.001,
     
     if opt_mode=='regression':
         iys = [None,idf[df_xy_args['xp_label']].shape[1]*2]
-    elif opt_mode=='classification':
+    #Update here
+    elif (opt_mode=='classification') or (opt_mode=='yolo'):
         iys = [None,idf[df_xy_args['y_label']][0].shape[1]]
 
     #ixs,iys=ix.shape,iy.shape
@@ -391,10 +392,12 @@ def train(df_xy_args,model=None,iters=10,lr=0.001,
         else:
             s.run(init_op)
         fd={learning_rate:lr,train_bool:True}
+        idfs,batches,batch_size,batch_rows = batch_params(df_xy_args)
+
         for _ in range(0,iters):
             
             #Define parameters to load from disk
-            idfs,batches,batch_size,batch_rows = batch_params(df_xy_args)
+            
             
             for batch in range(0,batches):
                 df_xy_args['offset']=batch*batch_size    
@@ -405,7 +408,7 @@ def train(df_xy_args,model=None,iters=10,lr=0.001,
                     #Join the points of regression 
                     iy=np.concatenate([fxs,fys],1)
                     ix=imgs
-                elif opt_mode == 'classification':
+                elif (opt_mode == 'classification') or (opt_mode=='yolo'):
                     ix,iy = df_xy (**df_xy_args)
 
                 fdt={xi:ix,y_:iy}
@@ -426,7 +429,7 @@ def train(df_xy_args,model=None,iters=10,lr=0.001,
                         #Join the points of regression 
                         iy=np.concatenate([fxs,fys],1)
                         ix=imgs
-                    elif opt_mode == 'classification':
+                    elif (opt_mode == 'classification') or (opt_mode=='yolo'):
                         ix,iy = df_xy (**df_xy_args)
 
                         #Add the values to the dictionary for training
@@ -455,7 +458,7 @@ def test_model(df_xy_args,model_name=None,opt_mode='regression',stats_list=['tp'
             stats_l.append(_+":0")
         return_dic ={}
         
-        stats_dic = {'regression':'loss:0','classification':stats_l}
+        stats_dic = {'regression':'loss:0','classification':stats_l,'yolo':'loss:0'}
         stats_output = stats_dic[opt_mode]
     
         #Start loading the model
@@ -493,7 +496,7 @@ def test_model(df_xy_args,model_name=None,opt_mode='regression',stats_list=['tp'
                         iy=np.concatenate([fxs,fys],1)
                         ix=imgs
                     
-                    elif opt_mode == 'classification':
+                    elif (opt_mode == 'classification') or (opt_mode=='yolo'):
                         ix,iy = df_xy (**df_xy_args)
 
                     #Add the values to the dictionary for training
@@ -509,7 +512,7 @@ def test_model(df_xy_args,model_name=None,opt_mode='regression',stats_list=['tp'
                             proc_dic[stats_list[_]]=sr
                         print(proc_dic)
                         output = proc_dic
-                    elif opt_mode =='regression':
+                    elif (opt_mode =='regression') or (opt_mode=='yolo'):
                         print("Loss",stats_result)
                         output = stats_result
                     batch_output.append(output)
@@ -526,7 +529,7 @@ def test_model(df_xy_args,model_name=None,opt_mode='regression',stats_list=['tp'
                         iy=np.concatenate([fxs,fys],1)
                         ix=imgs
                     
-                    elif opt_mode == 'classification':
+                    elif (opt_mode == 'classification') or (opt_mode=='yolo'):
                         ix,iy = df_xy (**df_xy_args)
 
                     #Add the values to the dictionary for training
@@ -542,7 +545,7 @@ def test_model(df_xy_args,model_name=None,opt_mode='regression',stats_list=['tp'
                             proc_dic[stats_list[_]]=sr
                         print(proc_dic)
                         output = proc_dic
-                    elif opt_mode =='regression':
+                    elif (opt_mode =='regression') or (opt_mode=='yolo'):
                         print("Loss",stats_result)
                         output = stats_result
                     batch_output.append(output)
