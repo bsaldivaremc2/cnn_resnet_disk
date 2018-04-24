@@ -1,3 +1,8 @@
+"""
+Version: 20180417
+
+"""
+
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,8 +33,12 @@ def create_model(ixs,iys,model=None,opt_mode='classification'):
     #Define the model here--DOWN
     x = xi
     types_dic = {'conv':0,'bn':0,'relu':0,'max_pool':0,'drop_out':0,'fc':0,'res_131':0}
+    last_type = None
     for i,_ in enumerate(model):
         _type=_[0]
+        if _type in ['conv','res_131','fc']:
+            last_type=_type
+
         _input=x
         params={'_input':_input}
         #print(_)
@@ -63,7 +72,8 @@ def create_model(ixs,iys,model=None,opt_mode='classification'):
             x = _res_131(**params)
 
     prev_conv_fcl = False
-    if model[-1][0] in ['conv','res_131']:
+    #if model[-1][0] in ['conv','res_131']:
+    if last_type in ['conv','res_131']:
         prev_conv_fcl=True
     prediction = fc(x,n=class_output,name_scope="FCL",prev_conv=prev_conv_fcl)
     
